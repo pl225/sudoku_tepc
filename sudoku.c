@@ -168,7 +168,7 @@ static int parse_grid() {
     return 1;
 }
 
-void* alocacaoUnitList (void *argumento) {
+void* alocacaoUnitListPeerValue (void *argumento) {
 
     ptr_thread_arg arg = (ptr_thread_arg)argumento;
     int inicio = arg->id * (s->dim / nThreads);
@@ -186,7 +186,21 @@ void* alocacaoUnitList (void *argumento) {
             }
         }
     }
+
+    for (int i = inicio; i < fim; i++) {
+        s->peers[i] = malloc(sizeof(cell_coord*) * s->dim);
+        assert(s->peers[i]);
+        for (int j = 0; j < s->dim; j++) {
+            s->peers[i][j] = calloc(s->peers_size, sizeof(cell_coord));
+            assert(s->peers[i][j]);
+        }
+    }
     
+    for (int i = inicio; i < fim; i++) {
+        s->values[i] = calloc(s->dim, sizeof(cell_v));
+        assert(s->values[i]);
+    }
+
 }
 
 static sudoku *create_sudoku(int bdim, int *grid) {
@@ -206,32 +220,19 @@ static sudoku *create_sudoku(int bdim, int *grid) {
     //[r][c][0 - row, 1 - column, 2 - box]//[r][c][0 - row, 1 - column, 2 - box][ix]
     s->unit_list = malloc(sizeof(cell_coord***) * dim);
     assert(s->unit_list);
+    s->peers = malloc(sizeof(cell_coord**) * dim);
+    assert(s->peers);
+    s->values = malloc (sizeof(cell_v*) * dim);
+    assert(s->values);
+
     for (int i = 0; i < nThreads; i++) {
         arg[i].id = i;
-        pthread_create(&id[i], NULL, alocacaoUnitList, &arg[i]);
+        pthread_create(&id[i], NULL, alocacaoUnitListPeerValue, &arg[i]);
         
     }
 
     for(int i = 0 ; i < nThreads ; i++){
         pthread_join(id[i], NULL);
-    }
-    
-    s->peers = malloc(sizeof(cell_coord**) * dim);
-    assert(s->peers);
-    for (int i = 0; i < dim; i++) {
-        s->peers[i] = malloc(sizeof(cell_coord*) * dim);
-        assert(s->peers[i]);
-        for (int j = 0; j < dim; j++) {
-            s->peers[i][j] = calloc(s->peers_size, sizeof(cell_coord));
-            assert(s->peers[i][j]);
-        }
-    }
-    
-    s->values = malloc (sizeof(cell_v*) * dim);
-    assert(s->values);
-    for (int i = 0; i < dim; i++) {
-        s->values[i] = calloc(dim, sizeof(cell_v));
-        assert(s->values[i]);
     }
     
     init();
