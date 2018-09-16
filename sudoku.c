@@ -168,6 +168,27 @@ static int parse_grid() {
     return 1;
 }
 
+void* alocacaoUnitList (void *argumento) {
+
+    ptr_thread_arg arg = (ptr_thread_arg)argumento;
+    int inicio = arg->id * (s->dim / nThreads);
+    int fim = (arg->id + 1) * (s->dim / nThreads);
+
+    for (int i = inicio; i < fim; i++) {
+        s->unit_list[i] = malloc(sizeof(cell_coord**) * s->dim);
+        assert (s->unit_list[i]);
+        for (int j = 0; j < s->dim; j++) {
+            s->unit_list[i][j] = malloc(sizeof(cell_coord*) * 3);
+            assert(s->unit_list[i][j]);
+            for (int k = 0; k < 3; k++) {
+                s->unit_list[i][j][k] = calloc(s->dim, sizeof(cell_coord));
+                assert(s->unit_list[i][j][k]);
+            }
+        }
+    }
+    
+}
+
 static sudoku *create_sudoku(int bdim, int *grid) {
     assert(bdim <= MAX_BDIM);
     
@@ -180,22 +201,19 @@ static sudoku *create_sudoku(int bdim, int *grid) {
     s->sol_count = 0;
 
     pthread_t id[nThreads];
-    thread_arg arg[nthreads];
+    thread_arg arg[nThreads];
     
     //[r][c][0 - row, 1 - column, 2 - box]//[r][c][0 - row, 1 - column, 2 - box][ix]
     s->unit_list = malloc(sizeof(cell_coord***) * dim);
     assert(s->unit_list);
-    for (int i = 0; i < dim; i++) {
-        s->unit_list[i] = malloc(sizeof(cell_coord**) * dim);
-        assert (s->unit_list[i]);
-        for (int j = 0; j < dim; j++) {
-            s->unit_list[i][j] = malloc(sizeof(cell_coord*) * 3);
-            assert(s->unit_list[i][j]);
-            for (int k = 0; k < 3; k++) {
-                s->unit_list[i][j][k] = calloc(dim, sizeof(cell_coord));
-                assert(s->unit_list[i][j][k]);
-            }
-        }
+    for (int i = 0; i < nThreads; i++) {
+        arg[i].id = i;
+        pthread_create(&id[i], NULL, alocacaoUnitList, &arg[i]);
+        
+    }
+
+    for(int i = 0 ; i < nThreads ; i++){
+        pthread_join(id[i], NULL);
     }
     
     s->peers = malloc(sizeof(cell_coord**) * dim);
