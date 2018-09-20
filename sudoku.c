@@ -3,6 +3,7 @@
 #include <assert.h>
 #include <limits.h>
 #include <pthread.h>
+#include <string.h>
 
 #define INT_TYPE unsigned long long 
 #define INT_TYPE_SIZE (sizeof(INT_TYPE) * 8)
@@ -297,6 +298,17 @@ static void display() {
             printf("%d ",  digit_get(&s->values[i][j]));
 }
 
+sudoku* copiarSudoku () {
+    sudoku *copia = malloc(sizeof(sudoku));
+    memcpy(copia, s, sizeof(sudoku));
+    copia->values = malloc (sizeof (cell_v *) * s->dim);
+    for (int i = 0; i < s->dim; i++) {
+        copia->values[i] = malloc (sizeof (cell_v) * s->dim);
+        memcpy(copia->values[i], s->values[i], sizeof (cell_v) * s->dim);
+    }
+    return copia;
+}
+
 static int search (int status) {
     int i, j, k;
 
@@ -321,8 +333,10 @@ static int search (int status) {
     int ret = 0;
     
     cell_v **values_bkp = malloc (sizeof (cell_v *) * s->dim);
-    for (i = 0; i < s->dim; i++)
+    for (i = 0; i < s->dim; i++) {
         values_bkp[i] = malloc (sizeof (cell_v) * s->dim);
+        memcpy(values_bkp[i], s->values[i], sizeof (cell_v) * s->dim);
+    }
     
     for (i = 0; i < s->dim; i++) 
         for (j = 0; j < s->dim; j++) {
@@ -333,20 +347,18 @@ static int search (int status) {
                 minJ = j;
             }
         }
-            
+    
     for (k = 1; k <= s->dim; k++) {
         if (cell_v_get(&s->values[minI][minJ], k))  {
             for (i = 0; i < s->dim; i++)
-                for (j = 0; j < s->dim; j++)
-                    values_bkp[i][j] = s->values[i][j];
+                memcpy(values_bkp[i], s->values[i], sizeof (cell_v) * s->dim);           
             
             if (search (assign(minI, minJ, k))) {
                 ret = 1;
                 goto FR_RT;
             } else {
                 for (i = 0; i < s->dim; i++) 
-                    for (j = 0; j < s->dim; j++)
-                        s->values[i][j] = values_bkp[i][j];
+                    memcpy(s->values[i], values_bkp[i], sizeof (cell_v) * s->dim);
             }
         }
     }
@@ -364,7 +376,6 @@ int solve() {
 }
 
 int main (int argc, char **argv) {
-
     int size;
     assert(scanf("%d", &size) == 1);
     assert(scanf("%d", &nThreads) == 1);
