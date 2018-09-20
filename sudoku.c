@@ -4,6 +4,7 @@
 #include <limits.h>
 #include <pthread.h>
 #include <string.h>
+#include <stdbool.h>
 
 #define INT_TYPE unsigned long long 
 #define INT_TYPE_SIZE (sizeof(INT_TYPE) * 8)
@@ -47,12 +48,19 @@ typedef struct sudoku {
 */
 sudoku *s;
 int nThreads;
+bool jaCriouThread = false;
 typedef struct argumento
 {
     int id;
 } thread_arg, *ptr_thread_arg;
 
-static int assign (int i, int j, int d);
+typedef struct ArgumentoBusca
+{
+    sudoku *sArg;
+    int status;
+} ArgumentoBusca, *PtrArgumentoBusca;
+
+static int assign (sudoku *s, int i, int j, int d);
 
 static inline int cell_v_get(cell_v *v, int p) {
     return !!((*v).v[(p - 1) / INT_TYPE_SIZE] & (((INT_TYPE)1) << ((p - 1) % INT_TYPE_SIZE))); //!! otherwise p > 32 breaks the return
@@ -163,7 +171,7 @@ static int parse_grid() {
     
     for (i = 0; i < s->dim; i++)
         for (j = 0; j < s->dim; j++)
-            if (ld_vals[i][j] > 0 && !assign(i, j, ld_vals[i][j]))
+            if (ld_vals[i][j] > 0 && !assign(s, i, j, ld_vals[i][j]))
                 return 0;
 
     return 1;
@@ -201,7 +209,7 @@ void* alocacaoUnitListPeerValue (void *argumento) {
         s->values[i] = calloc(s->dim, sizeof(cell_v));
         assert(s->values[i]);
     }
-
+    return NULL;
 }
 
 static sudoku *create_sudoku(int bdim, int *grid) {
@@ -246,7 +254,7 @@ static sudoku *create_sudoku(int bdim, int *grid) {
     return s;
 }
 
-static int eliminate (int i, int j, int d) {
+static int eliminate (sudoku *s, int i, int j, int d) {
     int k, ii, cont, pos;
     
     if (!cell_v_get(&s->values[i][j], d)) 
@@ -259,7 +267,7 @@ static int eliminate (int i, int j, int d) {
         return 0;
     } else if (count == 1) {
         for (k = 0; k < s->peers_size; k++)
-            if (!eliminate(s->peers[i][j][k].r, s->peers[i][j][k].c, digit_get(&s->values[i][j])))
+            if (!eliminate(s, s->peers[i][j][k].r, s->peers[i][j][k].c, digit_get(&s->values[i][j])))
                 return 0;
     }
 
@@ -276,17 +284,17 @@ static int eliminate (int i, int j, int d) {
         if (cont == 0)
             return 0;
         else if (cont == 1) {
-            if (!assign(u[pos].r, u[pos].c, d))
+            if (!assign(s, u[pos].r, u[pos].c, d))
                 return 0;
         }
     }
     return 1;
 }
 
-static int assign (int i, int j, int d) {
+static int assign (sudoku *s, int i, int j, int d) {
     for (int d2 = 1; d2 <= s->dim; d2++)
         if (d2 != d) 
-            if (!eliminate(i, j, d2))
+            if (!eliminate(s, i, j, d2))
                return 0;
     return 1;
 }
@@ -309,10 +317,14 @@ sudoku* copiarSudoku () {
     return copia;
 }
 
-static int search (int status) {
+static void* search (void* argumento) { // sudoku *s, int status
     int i, j, k;
 
-    if (!status) return status;
+    PtrArgumentoBusca argumentoBusca = (PtrArgumentoBusca) argumento;
+    int *status = malloc(sizeof(int));
+    *status = argumentoBusca->status;
+
+    if (!*status) return status;
 
     int solved = 1;
     for (i = 0; solved && i < s->dim; i++) 
@@ -323,14 +335,16 @@ static int search (int status) {
             }
     if (solved) {
         s->sol_count++;
-        return SUDOKU_SOLVE_STRATEGY == SUDOKU_SOLVE;
+        *status = SUDOKU_SOLVE_STRATEGY == SUDOKU_SOLVE;
+        return status;
     }
 
     //ok, there is still some work to be done
     int min = INT_MAX;
     int minI = -1;
     int minJ = -1;
-    int ret = 0;
+    int *ret = malloc(sizeof(int));
+    *ret  = 0;
     
     cell_v **values_bkp = malloc (sizeof (cell_v *) * s->dim);
     for (i = 0; i < s->dim; i++) {
@@ -353,8 +367,10 @@ static int search (int status) {
             for (i = 0; i < s->dim; i++)
                 memcpy(values_bkp[i], s->values[i], sizeof (cell_v) * s->dim);           
             
-            if (search (assign(minI, minJ, k))) {
-                ret = 1;
+            ArgumentoBusca argumentoBuscaF = {s, assign(s, minI, minJ, k)};
+            status = (int*) search(&argumentoBuscaF);
+            if (*status) {
+                *ret = 1;
                 goto FR_RT;
             } else {
                 for (i = 0; i < s->dim; i++) 
@@ -371,8 +387,9 @@ static int search (int status) {
     return ret;
 }
 
-int solve() {
-    return search(1);
+void solve(sudoku *s) {
+    ArgumentoBusca argumentoBusca = {s, 1};
+    search(&argumentoBusca);
 }
 
 int main (int argc, char **argv) {
@@ -391,9 +408,9 @@ int main (int argc, char **argv) {
     }
 
     s = create_sudoku(size, buf);
-
+    
     if (s) {
-        solve();
+        solve(s);
         if (s->sol_count) {
             switch (SUDOKU_SOLVE_STRATEGY) {
                 case SUDOKU_SOLVE:
