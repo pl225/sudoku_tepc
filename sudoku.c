@@ -57,6 +57,9 @@ typedef struct argumento
 typedef struct ArgumentoBusca
 {
     sudoku *sArg;
+    int minI;
+    int minJ;
+    int k;
     int status;
 } ArgumentoBusca, *PtrArgumentoBusca;
 
@@ -306,7 +309,7 @@ static void display() {
             printf("%d ",  digit_get(&s->values[i][j]));
 }
 
-sudoku* copiarSudoku () {
+sudoku* copiarSudoku (sudoku *s) {
     sudoku *copia = malloc(sizeof(sudoku));
     memcpy(copia, s, sizeof(sudoku));
     copia->values = malloc (sizeof (cell_v *) * s->dim);
@@ -322,9 +325,13 @@ static void* search (void* argumento) { // sudoku *s, int status
 
     PtrArgumentoBusca argumentoBusca = (PtrArgumentoBusca) argumento;
     int *status = malloc(sizeof(int));
-    *status = argumentoBusca->status;
+    sudoku *s = argumentoBusca->sArg;
+    *status = argumentoBusca->k > 0 ? assign(s, argumentoBusca->minI, argumentoBusca->minJ, argumentoBusca->k) : 1;    
 
-    if (!*status) return status;
+    if (!*status) {
+        argumentoBusca->status = *status;
+        return status;
+    }
 
     int solved = 1;
     for (i = 0; solved && i < s->dim; i++) 
@@ -336,6 +343,7 @@ static void* search (void* argumento) { // sudoku *s, int status
     if (solved) {
         s->sol_count++;
         *status = SUDOKU_SOLVE_STRATEGY == SUDOKU_SOLVE;
+        argumentoBusca->status = *status;
         return status;
     }
 
@@ -361,20 +369,49 @@ static void* search (void* argumento) { // sudoku *s, int status
                 minJ = j;
             }
         }
-    
-    for (k = 1; k <= s->dim; k++) {
-        if (cell_v_get(&s->values[minI][minJ], k))  {
-            for (i = 0; i < s->dim; i++)
-                memcpy(values_bkp[i], s->values[i], sizeof (cell_v) * s->dim);           
-            
-            ArgumentoBusca argumentoBuscaF = {s, assign(s, minI, minJ, k)};
-            status = (int*) search(&argumentoBuscaF);
-            if (*status) {
-                *ret = 1;
-                goto FR_RT;
-            } else {
-                for (i = 0; i < s->dim; i++) 
-                    memcpy(s->values[i], values_bkp[i], sizeof (cell_v) * s->dim);
+
+    if (!jaCriouThread) {
+        jaCriouThread = true; // criamos as threads aqui
+
+        sudoku* vetoresSudoku[min];
+        pthread_t id[min];
+        ArgumentoBusca argumentoBuscaF[min];
+
+        for (int a = 0; a < min; a++)
+            vetoresSudoku[a] = copiarSudoku(s);
+
+        int a = -1;
+
+        for (k = 1; k <= s->dim; k++) {
+            if (cell_v_get(&s->values[minI][minJ], k)) {
+                a++;
+                argumentoBuscaF[a].sArg = vetoresSudoku[a], argumentoBuscaF[a].minI = minI, 
+                    argumentoBuscaF[a].minJ = minJ, argumentoBuscaF[a].k = k;
+                pthread_create(&id[a], NULL, search, &argumentoBuscaF[a]);    
+            }
+        }
+        while(a >= 0){
+            pthread_join(id[a], NULL); 
+            //if(argumentoBusca[a].status == 1)
+            a--;
+
+        }
+
+    } else { // executa normalmente
+        for (k = 1; k <= s->dim; k++) {
+            if (cell_v_get(&s->values[minI][minJ], k)){
+                for (i = 0; i < s->dim; i++)
+                    memcpy(values_bkp[i], s->values[i], sizeof (cell_v) * s->dim);           
+                
+                ArgumentoBusca argumentoBuscaF = {s, minI, minJ, k};
+                status = (int*) search(&argumentoBuscaF);
+                if (*status) {
+                    *ret = 1;
+                    goto FR_RT;
+                } else {
+                    for (i = 0; i < s->dim; i++) 
+                        memcpy(s->values[i], values_bkp[i], sizeof (cell_v) * s->dim);
+                }
             }
         }
     }
@@ -383,12 +420,13 @@ static void* search (void* argumento) { // sudoku *s, int status
     for (i = 0; i < s->dim; i++)
         free(values_bkp[i]);
     free (values_bkp);
+    argumentoBusca->status = *ret;
     
     return ret;
 }
 
 void solve(sudoku *s) {
-    ArgumentoBusca argumentoBusca = {s, 1};
+    ArgumentoBusca argumentoBusca = {s, -1, -1, 0};
     search(&argumentoBusca);
 }
 
