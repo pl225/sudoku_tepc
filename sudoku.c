@@ -325,8 +325,8 @@ static void* search (void* argumento) { // sudoku *s, int status
 
     PtrArgumentoBusca argumentoBusca = (PtrArgumentoBusca) argumento;
     int *status = malloc(sizeof(int));
-    sudoku *s = argumentoBusca->sArg;
-    *status = argumentoBusca->k > 0 ? assign(s, argumentoBusca->minI, argumentoBusca->minJ, argumentoBusca->k) : 1;    
+    sudoku *aux = argumentoBusca->sArg; // mudar s
+    *status = argumentoBusca->k > 0 ? assign(aux, argumentoBusca->minI, argumentoBusca->minJ, argumentoBusca->k) : 1;    
 
     if (!*status) {
         argumentoBusca->status = *status;
@@ -334,14 +334,14 @@ static void* search (void* argumento) { // sudoku *s, int status
     }
 
     int solved = 1;
-    for (i = 0; solved && i < s->dim; i++) 
-        for (j = 0; j < s->dim; j++) 
-            if (cell_v_count(&s->values[i][j]) != 1) {
+    for (i = 0; solved && i < aux->dim; i++) 
+        for (j = 0; j < aux->dim; j++) 
+            if (cell_v_count(&aux->values[i][j]) != 1) {
                 solved = 0;
                 break;
             }
     if (solved) {
-        s->sol_count++;
+        aux->sol_count++;
         *status = SUDOKU_SOLVE_STRATEGY == SUDOKU_SOLVE;
         argumentoBusca->status = *status;
         return status;
@@ -354,15 +354,15 @@ static void* search (void* argumento) { // sudoku *s, int status
     int *ret = malloc(sizeof(int));
     *ret  = 0;
     
-    cell_v **values_bkp = malloc (sizeof (cell_v *) * s->dim);
-    for (i = 0; i < s->dim; i++) {
-        values_bkp[i] = malloc (sizeof (cell_v) * s->dim);
-        memcpy(values_bkp[i], s->values[i], sizeof (cell_v) * s->dim);
+    cell_v **values_bkp = malloc (sizeof (cell_v *) * aux->dim);
+    for (i = 0; i < aux->dim; i++) {
+        values_bkp[i] = malloc (sizeof (cell_v) * aux->dim);
+        memcpy(values_bkp[i], aux->values[i], sizeof (cell_v) * aux->dim);
     }
     
-    for (i = 0; i < s->dim; i++) 
-        for (j = 0; j < s->dim; j++) {
-            int used = cell_v_count(&s->values[i][j]);
+    for (i = 0; i < aux->dim; i++) 
+        for (j = 0; j < aux->dim; j++) {
+            int used = cell_v_count(&aux->values[i][j]);
             if (used > 1 && used < min) {
                 min = used;
                 minI = i;
@@ -378,12 +378,12 @@ static void* search (void* argumento) { // sudoku *s, int status
         ArgumentoBusca argumentoBuscaF[min];
 
         for (int a = 0; a < min; a++)
-            vetoresSudoku[a] = copiarSudoku(s);
+            vetoresSudoku[a] = copiarSudoku(aux);
 
         int a = -1;
 
-        for (k = 1; k <= s->dim; k++) {
-            if (cell_v_get(&s->values[minI][minJ], k)) {
+        for (k = 1; k <= aux->dim; k++) {
+            if (cell_v_get(&aux->values[minI][minJ], k)) {
                 a++;
                 argumentoBuscaF[a].sArg = vetoresSudoku[a], argumentoBuscaF[a].minI = minI, 
                     argumentoBuscaF[a].minJ = minJ, argumentoBuscaF[a].k = k;
@@ -392,32 +392,36 @@ static void* search (void* argumento) { // sudoku *s, int status
         }
         while(a >= 0){
             pthread_join(id[a], NULL); 
-            //if(argumentoBusca[a].status == 1)
             a--;
-
+        }
+        for (a = 0; a < min; a++) {
+            if (argumentoBuscaF[a].status == 1) {
+                s = vetoresSudoku[a]; // esse s deve ser o global. temos q renomear o s na linha 328 pra qq outro nome e trocar todos os s dessa função por ele
+                break;
+            }
         }
 
     } else { // executa normalmente
-        for (k = 1; k <= s->dim; k++) {
-            if (cell_v_get(&s->values[minI][minJ], k)){
-                for (i = 0; i < s->dim; i++)
-                    memcpy(values_bkp[i], s->values[i], sizeof (cell_v) * s->dim);           
+        for (k = 1; k <= aux->dim; k++) {
+            if (cell_v_get(&aux->values[minI][minJ], k)){
+                for (i = 0; i < aux->dim; i++)
+                    memcpy(values_bkp[i], aux->values[i], sizeof (cell_v) * aux->dim);           
                 
-                ArgumentoBusca argumentoBuscaF = {s, minI, minJ, k};
+                ArgumentoBusca argumentoBuscaF = {aux, minI, minJ, k};
                 status = (int*) search(&argumentoBuscaF);
                 if (*status) {
                     *ret = 1;
                     goto FR_RT;
                 } else {
-                    for (i = 0; i < s->dim; i++) 
-                        memcpy(s->values[i], values_bkp[i], sizeof (cell_v) * s->dim);
+                    for (i = 0; i < aux->dim; i++) 
+                        memcpy(aux->values[i], values_bkp[i], sizeof (cell_v) * aux->dim);
                 }
             }
         }
     }
     
     FR_RT:
-    for (i = 0; i < s->dim; i++)
+    for (i = 0; i < aux->dim; i++)
         free(values_bkp[i]);
     free (values_bkp);
     argumentoBusca->status = *ret;
