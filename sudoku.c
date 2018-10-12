@@ -2,9 +2,7 @@
 #include <stdlib.h>
 #include <assert.h>
 #include <limits.h>
-#include <pthread.h>
-#include <string.h>
-#include <stdbool.h>
+#include <omp.h>
 
 #define INT_TYPE unsigned long long 
 #define INT_TYPE_SIZE (sizeof(INT_TYPE) * 8)
@@ -43,26 +41,6 @@ typedef struct sudoku {
     unsigned long long sol_count;
 } sudoku;
 
-/*
-    variáveis globais novas
-*/
-sudoku *s;
-int nThreads;
-bool jaCriouThread = false;
-typedef struct argumento
-{
-    int id;
-} thread_arg, *ptr_thread_arg;
-
-typedef struct ArgumentoBusca
-{
-    sudoku *sArg;
-    int minI;
-    int minJ;
-    int k;
-    int status;
-} ArgumentoBusca, *PtrArgumentoBusca;
-
 static int assign (sudoku *s, int i, int j, int d);
 
 static inline int cell_v_get(cell_v *v, int p) {
@@ -92,7 +70,9 @@ static inline int digit_get (cell_v *v) {
     return -1;
 }
 
-static void destroy_sudoku() {
+static void destroy_sudoku(sudoku *s) {
+
+    #pragma omp parallel for
     for (int i = 0; i < s->dim; i++) {
         for (int j = 0; j < s->dim; j++) {
             for (int k = 0; k < 3; k++)
@@ -103,6 +83,7 @@ static void destroy_sudoku() {
     }
     free(s->unit_list);
     
+    #pragma omp parallel for
     for (int i = 0; i < s->dim; i++) {
         for (int j = 0; j < s->dim; j++)
             free(s->peers[i][j]);
@@ -110,6 +91,7 @@ static void destroy_sudoku() {
     }
     free(s->peers);
     
+    #pragma omp parallel for
     for (int i = 0; i < s->dim; i++) 
         free(s->values[i]);
     free(s->values);
@@ -117,7 +99,7 @@ static void destroy_sudoku() {
     free(s);
 }
 
-static void init() {
+static void init(sudoku *s) {
     int i, j, k, l, pos;
     
     //unit list 
@@ -159,7 +141,7 @@ static void init() {
     assert(pos == s->peers_size);
 }
 
-static int parse_grid() {
+static int parse_grid(sudoku *s) {
     int i, j, k;
     int ld_vals[s->dim][s->dim];
     for (k = 0, i = 0; i < s->dim; i++)
@@ -180,81 +162,65 @@ static int parse_grid() {
     return 1;
 }
 
-void* alocacaoUnitListPeerValue (void *argumento) {
-
-    ptr_thread_arg arg = (ptr_thread_arg)argumento;
-    int inicio = arg->id * (s->dim / nThreads);
-    int fim = (arg->id + 1) * (s->dim / nThreads);
-
-    for (int i = inicio; i < fim; i++) {
-        s->unit_list[i] = malloc(sizeof(cell_coord**) * s->dim);
-        assert (s->unit_list[i]);
-        for (int j = 0; j < s->dim; j++) {
-            s->unit_list[i][j] = malloc(sizeof(cell_coord*) * 3);
-            assert(s->unit_list[i][j]);
-            for (int k = 0; k < 3; k++) {
-                s->unit_list[i][j][k] = calloc(s->dim, sizeof(cell_coord));
-                assert(s->unit_list[i][j][k]);
-            }
-        }
-    }
-
-    for (int i = inicio; i < fim; i++) {
-        s->peers[i] = malloc(sizeof(cell_coord*) * s->dim);
-        assert(s->peers[i]);
-        for (int j = 0; j < s->dim; j++) {
-            s->peers[i][j] = calloc(s->peers_size, sizeof(cell_coord));
-            assert(s->peers[i][j]);
-        }
-    }
-    
-    for (int i = inicio; i < fim; i++) {
-        s->values[i] = calloc(s->dim, sizeof(cell_v));
-        assert(s->values[i]);
-    }
-    return NULL;
-}
-
 static sudoku *create_sudoku(int bdim, int *grid) {
     assert(bdim <= MAX_BDIM);
     
-    s = malloc(sizeof(sudoku));
-    s->bdim = bdim;
+    sudoku *r = malloc(sizeof(sudoku));
+    r->bdim = bdim;
     int dim = bdim * bdim;
-    s->dim = dim;
-    s->peers_size = 3 * dim - 2 * bdim - 1;
-    s->grid = grid;
-    s->sol_count = 0;
-
-    pthread_t id[nThreads];
-    thread_arg arg[nThreads];
+    r->dim = dim;
+    r->peers_size = 3 * dim - 2 * bdim - 1;
+    r->grid = grid;
+    r->sol_count = 0;
     
     //[r][c][0 - row, 1 - column, 2 - box]//[r][c][0 - row, 1 - column, 2 - box][ix]
-    s->unit_list = malloc(sizeof(cell_coord***) * dim);
-    assert(s->unit_list);
-    s->peers = malloc(sizeof(cell_coord**) * dim);
-    assert(s->peers);
-    s->values = malloc (sizeof(cell_v*) * dim);
-    assert(s->values);
+    r->unit_list = malloc(sizeof(cell_coord***) * dim);
+    assert(r->unit_list);
 
-    for (int i = 0; i < nThreads; i++) {
-        arg[i].id = i;
-        pthread_create(&id[i], NULL, alocacaoUnitListPeerValue, &arg[i]);
-        
-    }
-
-    for(int i = 0 ; i < nThreads ; i++){
-        pthread_join(id[i], NULL);
+    #pragma omp parallel for
+    for (int i = 0; i < dim; i++) {
+        r->unit_list[i] = malloc(sizeof(cell_coord**) * dim);
+        assert (r->unit_list[i]);
+        for (int j = 0; j < dim; j++) {
+            r->unit_list[i][j] = malloc(sizeof(cell_coord*) * 3);
+            assert(r->unit_list[i][j]);
+            for (int k = 0; k < 3; k++) {
+                r->unit_list[i][j][k] = calloc(dim, sizeof(cell_coord));
+                assert(r->unit_list[i][j][k]);
+            }
+        }
     }
     
-    init();
-    if (!parse_grid()) {
+    r->peers = malloc(sizeof(cell_coord**) * dim);
+    assert(r->peers);
+
+    #pragma omp parallel for
+    for (int i = 0; i < dim; i++) {
+        r->peers[i] = malloc(sizeof(cell_coord*) * dim);
+        assert(r->peers[i]);
+        for (int j = 0; j < dim; j++) {
+            r->peers[i][j] = calloc(r->peers_size, sizeof(cell_coord));
+            assert(r->peers[i][j]);
+        }
+    }
+    
+    r->values = malloc (sizeof(cell_v*) * dim);
+    assert(r->values);
+
+    #pragma omp parallel for
+    for (int i = 0; i < dim; i++) {
+        r->values[i] = calloc(dim, sizeof(cell_v));
+        assert(r->values[i]);
+    }
+    
+    init(r);
+    if (!parse_grid(r)) {
         printf("Error parsing grid\n");
-        destroy_sudoku();
+        destroy_sudoku(r);
         return 0;
     }
     
-    return s;
+    return r;
 }
 
 static int eliminate (sudoku *s, int i, int j, int d) {
@@ -302,142 +268,83 @@ static int assign (sudoku *s, int i, int j, int d) {
     return 1;
 }
 
-static void display() {
+static void display(sudoku *s) {
     printf("%d\n", s->bdim);
     for (int i = 0; i < s->dim; i++)
         for (int j = 0; j < s->dim; j++)
             printf("%d ",  digit_get(&s->values[i][j]));
 }
 
-sudoku* copiarSudoku (sudoku *s) {
-    sudoku *copia = malloc(sizeof(sudoku));
-    memcpy(copia, s, sizeof(sudoku));
-    copia->values = malloc (sizeof (cell_v *) * s->dim);
-    for (int i = 0; i < s->dim; i++) {
-        copia->values[i] = malloc (sizeof (cell_v) * s->dim);
-        memcpy(copia->values[i], s->values[i], sizeof (cell_v) * s->dim);
-    }
-    return copia;
-}
-
-static void* search (void* argumento) { // sudoku *s, int status
+static int search (sudoku *s, int status) {
     int i, j, k;
 
-    PtrArgumentoBusca argumentoBusca = (PtrArgumentoBusca) argumento;
-    int *status = malloc(sizeof(int));
-    sudoku *aux = argumentoBusca->sArg; // mudar s
-    *status = argumentoBusca->k > 0 ? assign(aux, argumentoBusca->minI, argumentoBusca->minJ, argumentoBusca->k) : 1;    
-
-    if (!*status) {
-        argumentoBusca->status = *status;
-        return status;
-    }
+    if (!status) return status;
 
     int solved = 1;
-    for (i = 0; solved && i < aux->dim; i++) 
-        for (j = 0; j < aux->dim; j++) 
-            if (cell_v_count(&aux->values[i][j]) != 1) {
+    for (i = 0; solved && i < s->dim; i++) 
+        for (j = 0; j < s->dim; j++) 
+            if (cell_v_count(&s->values[i][j]) != 1) {
                 solved = 0;
                 break;
             }
     if (solved) {
-        aux->sol_count++;
-        *status = SUDOKU_SOLVE_STRATEGY == SUDOKU_SOLVE;
-        argumentoBusca->status = *status;
-        return status;
+        s->sol_count++;
+        return SUDOKU_SOLVE_STRATEGY == SUDOKU_SOLVE;
     }
 
     //ok, there is still some work to be done
     int min = INT_MAX;
     int minI = -1;
     int minJ = -1;
-    int *ret = malloc(sizeof(int));
-    *ret  = 0;
+    int ret = 0;
     
-    cell_v **values_bkp = malloc (sizeof (cell_v *) * aux->dim);
-    for (i = 0; i < aux->dim; i++) {
-        values_bkp[i] = malloc (sizeof (cell_v) * aux->dim);
-        memcpy(values_bkp[i], aux->values[i], sizeof (cell_v) * aux->dim);
-    }
+    cell_v **values_bkp = malloc (sizeof (cell_v *) * s->dim);
+    for (i = 0; i < s->dim; i++)
+        values_bkp[i] = malloc (sizeof (cell_v) * s->dim);
     
-    for (i = 0; i < aux->dim; i++) 
-        for (j = 0; j < aux->dim; j++) {
-            int used = cell_v_count(&aux->values[i][j]);
+    for (i = 0; i < s->dim; i++) 
+        for (j = 0; j < s->dim; j++) {
+            int used = cell_v_count(&s->values[i][j]);
             if (used > 1 && used < min) {
                 min = used;
                 minI = i;
                 minJ = j;
             }
         }
-
-    if (!jaCriouThread) {
-        jaCriouThread = true; // criamos as threads aqui
-
-        sudoku* vetoresSudoku[min];
-        pthread_t id[min];
-        ArgumentoBusca argumentoBuscaF[min];
-
-        for (int a = 0; a < min; a++)
-            vetoresSudoku[a] = copiarSudoku(aux);
-
-        int a = -1;
-
-        for (k = 1; k <= aux->dim; k++) {
-            if (cell_v_get(&aux->values[minI][minJ], k)) {
-                a++;
-                argumentoBuscaF[a].sArg = vetoresSudoku[a], argumentoBuscaF[a].minI = minI, 
-                    argumentoBuscaF[a].minJ = minJ, argumentoBuscaF[a].k = k;
-                pthread_create(&id[a], NULL, search, &argumentoBuscaF[a]);    
-            }
-        }
-        while(a >= 0){
-            pthread_join(id[a], NULL); 
-            a--;
-        }
-        for (a = 0; a < min; a++) {
-            if (argumentoBuscaF[a].status == 1) {
-                s = vetoresSudoku[a]; // esse s deve ser o global. temos q renomear o s na linha 328 pra qq outro nome e trocar todos os s dessa função por ele
-                break;
-            }
-        }
-
-    } else { // executa normalmente
-        for (k = 1; k <= aux->dim; k++) {
-            if (cell_v_get(&aux->values[minI][minJ], k)){
-                for (i = 0; i < aux->dim; i++)
-                    memcpy(values_bkp[i], aux->values[i], sizeof (cell_v) * aux->dim);           
-                
-                ArgumentoBusca argumentoBuscaF = {aux, minI, minJ, k};
-                status = (int*) search(&argumentoBuscaF);
-                if (*status) {
-                    *ret = 1;
-                    goto FR_RT;
-                } else {
-                    for (i = 0; i < aux->dim; i++) 
-                        memcpy(aux->values[i], values_bkp[i], sizeof (cell_v) * aux->dim);
-                }
+            
+    for (k = 1; k <= s->dim; k++) {
+        if (cell_v_get(&s->values[minI][minJ], k))  {
+            for (i = 0; i < s->dim; i++)
+                for (j = 0; j < s->dim; j++)
+                    values_bkp[i][j] = s->values[i][j];
+            
+            if (search (s, assign(s, minI, minJ, k))) {
+                ret = 1;
+                goto FR_RT;
+            } else {
+                for (i = 0; i < s->dim; i++) 
+                    for (j = 0; j < s->dim; j++)
+                        s->values[i][j] = values_bkp[i][j];
             }
         }
     }
     
     FR_RT:
-    for (i = 0; i < aux->dim; i++)
+    for (i = 0; i < s->dim; i++)
         free(values_bkp[i]);
     free (values_bkp);
-    argumentoBusca->status = *ret;
     
     return ret;
 }
 
-void solve(sudoku *s) {
-    ArgumentoBusca argumentoBusca = {s, -1, -1, 0};
-    search(&argumentoBusca);
+int solve(sudoku *s) {
+    return search(s, 1);
 }
 
 int main (int argc, char **argv) {
+
     int size;
     assert(scanf("%d", &size) == 1);
-    assert(scanf("%d", &nThreads) == 1);
     assert (size <= MAX_BDIM);
     int buf_size = size * size * size * size;
     int buf[buf_size];
@@ -449,14 +356,13 @@ int main (int argc, char **argv) {
         }
     }
 
-    s = create_sudoku(size, buf);
-    
+    sudoku *s = create_sudoku(size, buf);
     if (s) {
         solve(s);
         if (s->sol_count) {
             switch (SUDOKU_SOLVE_STRATEGY) {
                 case SUDOKU_SOLVE:
-                    display();
+                    display(s);
                     break;
                 case SUDOKU_COUNT_SOLS: 
                     printf("%lld\n", s->sol_count);
