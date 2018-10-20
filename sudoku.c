@@ -4,6 +4,7 @@
 #include <limits.h>
 #include <omp.h>
 #include <string.h>
+#include <stdbool.h>
 
 #define INT_TYPE unsigned long long 
 #define INT_TYPE_SIZE (sizeof(INT_TYPE) * 8)
@@ -38,8 +39,9 @@ typedef struct sudoku {
     cell_coord ****unit_list; //[r][c][0 - row, 1 - column, 2 - box],
     cell_coord ***peers;
     cell_v **values;
-    
+        
     unsigned long long sol_count;
+    bool status;
 } sudoku;
 
 static int assign (sudoku *s, int i, int j, int d);
@@ -278,6 +280,7 @@ static void display(sudoku *s) {
 
 sudoku* copiarSudoku (sudoku *s) {
     sudoku *copia = malloc(sizeof(sudoku));
+    copia->status = false;
     memcpy(copia, s, sizeof(sudoku));
     copia->values = malloc (sizeof (cell_v *) * s->dim);
     for (int i = 0; i < s->dim; i++) {
@@ -287,8 +290,10 @@ sudoku* copiarSudoku (sudoku *s) {
     return copia;
 }
 
-static int search (sudoku *s, int status) {
+static int search (sudoku *s, int argMinI, int argMinJ, int argK) {
     int i, j, k;
+
+    int status = argK > 0 ? assign(s, argMinI, argMinJ, argK) : 1;    
 
     if (!status) return status;
 
@@ -329,7 +334,7 @@ static int search (sudoku *s, int status) {
             for (i = 0; i < s->dim; i++)
                 memcpy(values_bkp[i], s->values[i], sizeof (cell_v) * s->dim);
             
-            if (search (s, assign(s, minI, minJ, k))) {
+            if (search (s, minI, minJ, k)) {
                 ret = 1;
                 goto FR_RT;
             } else {
@@ -348,7 +353,7 @@ static int search (sudoku *s, int status) {
 }
 
 int solve(sudoku *s) {
-    return search(s, 1);
+    return search(s, -1, -1, 0);
 }
 
 int main (int argc, char **argv) {
