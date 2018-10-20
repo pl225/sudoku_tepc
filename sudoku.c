@@ -44,6 +44,8 @@ typedef struct sudoku {
     bool status;
 } sudoku;
 
+bool jaCriouTarefas = false;
+
 static int assign (sudoku *s, int i, int j, int d);
 
 static inline int cell_v_get(cell_v *v, int p) {
@@ -306,6 +308,7 @@ static int search (sudoku *s, int argMinI, int argMinJ, int argK) {
             }
     if (solved) {
         s->sol_count++;
+        s->status = 1;
         return SUDOKU_SOLVE_STRATEGY == SUDOKU_SOLVE;
     }
 
@@ -328,18 +331,51 @@ static int search (sudoku *s, int argMinI, int argMinJ, int argK) {
                 minJ = j;
             }
         }
-            
-    for (k = 1; k <= s->dim; k++) {
-        if (cell_v_get(&s->values[minI][minJ], k))  {
-            for (i = 0; i < s->dim; i++)
-                memcpy(values_bkp[i], s->values[i], sizeof (cell_v) * s->dim);
-            
-            if (search (s, minI, minJ, k)) {
-                ret = 1;
-                goto FR_RT;
-            } else {
-                for (i = 0; i < s->dim; i++) 
-                    memcpy(s->values[i], values_bkp[i], sizeof (cell_v) * s->dim);
+        
+    if (!jaCriouTarefas) { // criar tarefas aqui
+        jaCriouTarefas = true;
+
+        sudoku* vetoresSudoku[min];
+        for (int a = 0; a < min; a++)
+            vetoresSudoku[a] = copiarSudoku(s);
+
+        #pragma omp parallel num_threads(min)
+        {
+            #pragma omp single
+            for (int k = 1, a = 0; k <= s->dim; k++) {
+                if (cell_v_get(&s->values[minI][minJ], k)) {
+                    #pragma omp task
+                    search(vetoresSudoku[a], minI, minJ, k);
+                    a++;
+                }
+            }
+            #pragma omp taskwait
+        }
+
+        for (int a = 0; a < min; a++) {
+            if (vetoresSudoku[a]->status == 1) {
+                s->status = 1;
+                s->sol_count = vetoresSudoku[a]->sol_count;
+                s->values = vetoresSudoku[a]->values;
+                return 1;
+            }
+        }
+
+        return 0;
+
+    } else {
+        for (k = 1; k <= s->dim; k++) {
+            if (cell_v_get(&s->values[minI][minJ], k))  {
+                for (i = 0; i < s->dim; i++)
+                    memcpy(values_bkp[i], s->values[i], sizeof (cell_v) * s->dim);
+                
+                if (search (s, minI, minJ, k)) {
+                    ret = 1;
+                    goto FR_RT;
+                } else {
+                    for (i = 0; i < s->dim; i++) 
+                        memcpy(s->values[i], values_bkp[i], sizeof (cell_v) * s->dim);
+                }
             }
         }
     }
