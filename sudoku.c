@@ -4,6 +4,7 @@
 #include <limits.h>
 #include <string.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <mpi.h>
 
 #define INT_TYPE unsigned long long 
@@ -50,7 +51,7 @@ typedef struct pSquares
     int k;
 } pSquares;
 
-bool jaDividiuProcessos = false;
+bool jaDividiuProcessos = true;
 int world_size, world_rank;
 
 static int assign (sudoku *s, int i, int j, int d);
@@ -289,6 +290,10 @@ sudoku* copiarSudoku (sudoku *s) {
     return copia;
 }
 
+int cmpSquare (const void *a, const void *b) {
+    return ((pSquares *) a)->qtd - ((pSquares *) b)->qtd;
+}
+
 static int search (sudoku *s, int argMinI, int argMinJ, int argK) {
     int i, j, k;
     // se recebeu assincrono exit
@@ -330,11 +335,23 @@ static int search (sudoku *s, int argMinI, int argMinJ, int argK) {
 
     if (!jaDividiuProcessos) {
         jaDividiuProcessos = true;
+
+        const int nitems = 2;
+        int blocklenghts [] = {1, 1};
+        MPI_Datatype types [] = {MPI_INT, MPI_INT};
+        MPI_Datatype mpi_psquare_type;
+        MPI_Aint offsets[2];
+
+        offsets[0] = offsetof(pSquares, qtd);
+        offsets[1] = offsetof(pSquares, k);
+
+        MPI_Type_create_struct(nitems, blocklenghts, offsets, types, &mpi_psquare_type);
+        MPI_Type_commit(&mpi_psquare_type);
         // rcv assincrono
         // dividir processos
         // os que tiverem menos possibilidades para o master e o que tiver mais para o servo
         if (world_rank == 0) {
-            pSquares[min] possibilidades;
+            pSquares possibilidades[min];
 
             //send mais possibilidades
 
@@ -342,6 +359,8 @@ static int search (sudoku *s, int argMinI, int argMinJ, int argK) {
         } else { // nao eh o master
             // rcv menos possibilidades
         }
+
+        MPI_Type_free(&mpi_psquare_type);
     } else {            
         for (k = 1; k <= s->dim; k++) {
             if (cell_v_get(&s->values[minI][minJ], k))  {
