@@ -41,6 +41,7 @@ typedef struct sudoku {
     cell_v **values;
     
     unsigned long long sol_count;
+    bool status;
 } sudoku;
 
 bool jaDividiuProcessos = false;
@@ -327,6 +328,11 @@ static int search (sudoku *s, int argMinI, int argMinJ, int argK) {
 
         // dividir processos
         // os que tiverem menos possibilidades para o master e o que tiver mais para o servo
+        if (world_rank == 0) {
+
+        } else { // nao eh o master
+            // rcv
+        }
     } else {            
         for (k = 1; k <= s->dim; k++) {
             if (cell_v_get(&s->values[minI][minJ], k))  {
