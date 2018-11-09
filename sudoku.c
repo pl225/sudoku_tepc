@@ -1,20 +1,9 @@
-/*
- * Emilio Francesquini <francesquini@gmail.com>
- * 
- * https://github.com/francesquini/sudoku
-
- * This is a sequential Sudoku solver which uses Peter Norvig’s
- * constraint propagation method (http://norvig.com/sudoku.html).
- *
- * This was one of the problems used during the 11th Marathon of Parallel Programming
- * http://lspd.mackenzie.br/marathon/16/index.html
- */
-
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <assert.h>
 #include <limits.h>
+#include <string.h>
+#include <stdbool.h>
 #include <mpi.h>
 
 #define INT_TYPE unsigned long long 
@@ -53,6 +42,9 @@ typedef struct sudoku {
     
     unsigned long long sol_count;
 } sudoku;
+
+bool jaDividiuProcessos = false;
+int world_size, world_rank;
 
 static int assign (sudoku *s, int i, int j, int d);
 
@@ -228,7 +220,7 @@ static sudoku *create_sudoku(int bdim, int *grid) {
 
 static int eliminate (sudoku *s, int i, int j, int d) {
     int k, ii, cont, pos;
-    
+    // se recebeu assincrono exit
     if (!cell_v_get(&s->values[i][j], d)) 
         return 1;
 
@@ -263,7 +255,7 @@ static int eliminate (sudoku *s, int i, int j, int d) {
     return 1;
 }
 
-static int assign (sudoku *s, int i, int j, int d) {
+static int assign (sudoku *s, int i, int j, int d) {// se recebeu assincrono exit
     for (int d2 = 1; d2 <= s->dim; d2++)
         if (d2 != d) 
             if (!eliminate(s, i, j, d2))
@@ -278,9 +270,22 @@ static void display(sudoku *s) {
             printf("%d ",  digit_get(&s->values[i][j]));
 }
 
-static int search (sudoku *s, int status) {
-    int i, j, k;
+sudoku* copiarSudoku (sudoku *s) {
+    sudoku *copia = malloc(sizeof(sudoku));
+    copia->status = false;
+    memcpy(copia, s, sizeof(sudoku));
+    copia->values = malloc (sizeof (cell_v *) * s->dim);
+    for (int i = 0; i < s->dim; i++) {
+        copia->values[i] = malloc (sizeof (cell_v) * s->dim);
+        memcpy(copia->values[i], s->values[i], sizeof (cell_v) * s->dim);
+    }
+    return copia;
+}
 
+static int search (sudoku *s, int argMinI, int argMinJ, int argK) {
+    int i, j, k;
+    // se recebeu assincrono exit
+    int status = argK > 0 ? assign(s, argMinI, argMinJ, argK) : 1;
     if (!status) return status;
 
     int solved = 1;
@@ -292,6 +297,7 @@ static int search (sudoku *s, int status) {
             }
     if (solved) {
         s->sol_count++;
+        // send assincrono
         return SUDOKU_SOLVE_STRATEGY == SUDOKU_SOLVE;
     }
 
@@ -314,24 +320,32 @@ static int search (sudoku *s, int status) {
                 minJ = j;
             }
         }
-            
-    for (k = 1; k <= s->dim; k++) {
-        if (cell_v_get(&s->values[minI][minJ], k))  {
-            for (i = 0; i < s->dim; i++)
-                for (j = 0; j < s->dim; j++)
-                    values_bkp[i][j] = s->values[i][j];
-            
-            if (search (s, assign(s, minI, minJ, k))) {
-                ret = 1;
-                goto FR_RT;
-            } else {
-                for (i = 0; i < s->dim; i++) 
+
+    if (!jaDividiuProcessos) {
+        jaDividiuProcessos = true;
+        // rcv assincrono
+
+        // dividir processos
+        // os que tiverem menos possibilidades para o master e o que tiver mais para o servo
+    } else {            
+        for (k = 1; k <= s->dim; k++) {
+            if (cell_v_get(&s->values[minI][minJ], k))  {
+                for (i = 0; i < s->dim; i++)
                     for (j = 0; j < s->dim; j++)
-                        s->values[i][j] = values_bkp[i][j];
+                        values_bkp[i][j] = s->values[i][j];
+                
+                if (search (s, minI, minJ, k)) {
+                    ret = 1;
+                    goto FR_RT;
+                } else {
+                    for (i = 0; i < s->dim; i++) 
+                        for (j = 0; j < s->dim; j++)
+                            s->values[i][j] = values_bkp[i][j];
+                }
             }
         }
     }
-    
+
     FR_RT:
     for (i = 0; i < s->dim; i++)
         free(values_bkp[i]);
@@ -341,7 +355,7 @@ static int search (sudoku *s, int status) {
 }
 
 int solve(sudoku *s) {
-    return search(s, 1);
+    return search(s, -1, -1, 0);
 }
 
 int main (int argc, char **argv) {
@@ -350,11 +364,9 @@ int main (int argc, char **argv) {
     MPI_Init(NULL, NULL);
 
     // Get the number of processes
-    int world_size;
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
 
     // Get the rank of the process
-    int world_rank;
     MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
 
     // Get the name of the processor
