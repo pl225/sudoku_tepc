@@ -44,6 +44,12 @@ typedef struct sudoku {
     bool status;
 } sudoku;
 
+typedef struct pSquares
+{
+    int qtd;
+    int k;
+} pSquares;
+
 bool jaDividiuProcessos = false;
 int world_size, world_rank;
 
@@ -325,13 +331,16 @@ static int search (sudoku *s, int argMinI, int argMinJ, int argK) {
     if (!jaDividiuProcessos) {
         jaDividiuProcessos = true;
         // rcv assincrono
-
         // dividir processos
         // os que tiverem menos possibilidades para o master e o que tiver mais para o servo
         if (world_rank == 0) {
+            pSquares[min] possibilidades;
 
+            //send mais possibilidades
+
+            //executar outros
         } else { // nao eh o master
-            // rcv
+            // rcv menos possibilidades
         }
     } else {            
         for (k = 1; k <= s->dim; k++) {
