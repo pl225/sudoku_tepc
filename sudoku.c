@@ -51,7 +51,7 @@ typedef struct pSquares
     int k;
 } pSquares;
 
-bool jaDividiuProcessos = true;
+bool jaDividiuProcessos = false;
 int world_size, world_rank;
 
 static int assign (sudoku *s, int i, int j, int d);
@@ -350,14 +350,45 @@ static int search (sudoku *s, int argMinI, int argMinJ, int argK) {
         // rcv assincrono
         // dividir processos
         // os que tiverem menos possibilidades para o master e o que tiver mais para o servo
-        if (world_rank == 0) {
+        if (world_rank == 1) {
             pSquares possibilidades[min];
+            
+            int a = 0;
+            for (k = 1; k <= s->dim; k++) {
+                if (cell_v_get(&s->values[minI][minJ], k))  {
+                    int q = 0; // contador do aparecimento de k nos quadrados do tabuleiro
+                    for (i = 0; i < s->dim; i++) {
+                        for (j = 0; j < s->dim; j++) {
+                            if(cell_v_get(&s->values[i][j], k)) q++;
+                        }
+                    }
+                    possibilidades[a].qtd = q, possibilidades[a].k = k;
+                    a++;
+                }
+            }
+
+            qsort(possibilidades, min, sizeof(pSquares), cmpSquare);
+
+            if (min % 2 == 0) MPI_Send(possibilidades + (min / 2), min / 2, mpi_psquare_type, 0, 0, MPI_COMM_WORLD);
+            else MPI_Send(possibilidades + (min / 2) + 1, (min / 2) - 1, mpi_psquare_type, 0, 0, MPI_COMM_WORLD);
 
             //send mais possibilidades
+            MPI_Finalize();
+            exit(0);
 
             //executar outros
         } else { // nao eh o master
             // rcv menos possibilidades
+            int number_amount;
+            MPI_Status status;
+            MPI_Probe(1, 0, MPI_COMM_WORLD, &status);
+            MPI_Get_count(&status, mpi_psquare_type, &number_amount);
+
+            pSquares possibilidades[number_amount];
+            MPI_Recv(possibilidades, number_amount, mpi_psquare_type, 1, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+            MPI_Finalize();
+            exit(0);
         }
 
         MPI_Type_free(&mpi_psquare_type);
