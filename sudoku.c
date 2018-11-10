@@ -52,7 +52,8 @@ typedef struct pSquares
 } pSquares;
 
 bool jaDividiuProcessos = false;
-int world_size, world_rank;
+int world_size, world_rank, alguemTerminou = 0, flag = 0;
+MPI_Request polling;
 
 static int assign (sudoku *s, int i, int j, int d);
 
@@ -228,7 +229,6 @@ static sudoku *create_sudoku(int bdim, int *grid) {
 
 static int eliminate (sudoku *s, int i, int j, int d) {
     int k, ii, cont, pos;
-    // se recebeu assincrono exit
     if (!cell_v_get(&s->values[i][j], d)) 
         return 1;
 
@@ -296,7 +296,7 @@ int cmpSquare (const void *a, const void *b) {
 
 static int search (sudoku *s, int argMinI, int argMinJ, int argK) {
     int i, j, k;
-    // se recebeu assincrono exit
+
     int status = argK > 0 ? assign(s, argMinI, argMinJ, argK) : 1;
     if (!status) return status;
 
@@ -347,9 +347,7 @@ static int search (sudoku *s, int argMinI, int argMinJ, int argK) {
 
         MPI_Type_create_struct(nitems, blocklenghts, offsets, types, &mpi_psquare_type);
         MPI_Type_commit(&mpi_psquare_type);
-        // rcv assincrono
-        // dividir processos
-        // os que tiverem menos possibilidades para o master e o que tiver mais para o servo
+        
         if (world_rank == 1) {
             pSquares possibilidades[min];
             
@@ -370,16 +368,24 @@ static int search (sudoku *s, int argMinI, int argMinJ, int argK) {
             qsort(possibilidades, min, sizeof(pSquares), cmpSquare);
 
             if (min % 2 == 0) MPI_Send(possibilidades + (min / 2), min / 2, mpi_psquare_type, 0, 0, MPI_COMM_WORLD);
-            else MPI_Send(possibilidades + (min / 2) + 1, (min / 2) - 1, mpi_psquare_type, 0, 0, MPI_COMM_WORLD);
+            else MPI_Send(possibilidades + (min / 2) + 1, min / 2, mpi_psquare_type, 0, 0, MPI_COMM_WORLD);
 
-            //send mais possibilidades
-            MPI_Finalize();
-            exit(0);
+            sudoku *copia;
+            int resultado;
+            for (i = 0; i < min / 2; i++) {
+                copia = copiarSudoku(s);
+                resultado = search(copia, minI, minJ, possibilidades[i].k);
+                if (resultado != 0) {
+                    display(copia);
+                    alguemTerminou = 1;
+                    MPI_Type_free(&mpi_psquare_type);
+                    return 1;
+                }
+            }
+            
+        } else { 
 
-            //executar outros
-        } else { // nao eh o master
-            // rcv menos possibilidades
-            int number_amount;
+            int number_amount, resultado;
             MPI_Status status;
             MPI_Probe(1, 0, MPI_COMM_WORLD, &status);
             MPI_Get_count(&status, mpi_psquare_type, &number_amount);
@@ -387,11 +393,21 @@ static int search (sudoku *s, int argMinI, int argMinJ, int argK) {
             pSquares possibilidades[number_amount];
             MPI_Recv(possibilidades, number_amount, mpi_psquare_type, 1, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
-            MPI_Finalize();
-            exit(0);
+            sudoku *copia;
+            for (i = 0; i < number_amount; i++) {
+                copia = copiarSudoku(s);
+                resultado = search(copia, minI, minJ, possibilidades[i].k);
+                if (resultado != 0) {
+                    display(copia);
+                    alguemTerminou = 1;
+                    MPI_Type_free(&mpi_psquare_type);
+                    return 1;
+                }
+            }
         }
 
-        MPI_Type_free(&mpi_psquare_type);
+        return 0;
+
     } else {            
         for (k = 1; k <= s->dim; k++) {
             if (cell_v_get(&s->values[minI][minJ], k))  {
@@ -474,23 +490,9 @@ int main (int argc, char **argv) {
 
         s = create_sudoku(size, buf);
     } 
-
     if (s) {
-        solve(s);
-        if (s->sol_count) {
-            switch (SUDOKU_SOLVE_STRATEGY) {
-                case SUDOKU_SOLVE:
-                    display(s);
-                    break;
-                case SUDOKU_COUNT_SOLS: 
-                    printf("%lld\n", s->sol_count);
-                    break;
-                default:
-                    assert(0);
-            }
-        } else {
-            printf("Could not solve puzzle.\n");
-        }
+        int result = solve(s);
+        if (!result && alguemTerminou == 0) printf("Could not solve puzzle.\n");
         destroy_sudoku(s);
     } else {
         printf("Could not load puzzle.\n");
