@@ -238,9 +238,10 @@ static int eliminate (sudoku *s, int i, int j, int d) {
     if (count == 0) {
         return 0;
     } else if (count == 1) {
-        for (k = 0; k < s->peers_size; k++)
+        for (k = 0; k < s->peers_size; k++) {
             if (!eliminate(s, s->peers[i][j][k].r, s->peers[i][j][k].c, digit_get(&s->values[i][j])))
                 return 0;
+        }
     }
 
     for (k = 0; k < 3; k++) {//row, column, box 
@@ -263,7 +264,7 @@ static int eliminate (sudoku *s, int i, int j, int d) {
     return 1;
 }
 
-static int assign (sudoku *s, int i, int j, int d) {// se recebeu assincrono exit
+static int assign (sudoku *s, int i, int j, int d) {
     for (int d2 = 1; d2 <= s->dim; d2++)
         if (d2 != d) 
             if (!eliminate(s, i, j, d2))
@@ -276,6 +277,15 @@ static void display(sudoku *s) {
     for (int i = 0; i < s->dim; i++)
         for (int j = 0; j < s->dim; j++)
             printf("%d ",  digit_get(&s->values[i][j]));
+}
+
+int apresentarResultados (sudoku * copia, MPI_Datatype *mpi_psquare_type) {
+    display(copia);
+    MPI_Cancel(&polling);
+    alguemTerminou = 1;
+    MPI_Send(&alguemTerminou, 1, MPI_INT, world_rank == 0 ? 1 : 0, 123, MPI_COMM_WORLD);
+    MPI_Type_free(mpi_psquare_type);
+    return 1;
 }
 
 sudoku* copiarSudoku (sudoku *s) {
@@ -291,14 +301,16 @@ sudoku* copiarSudoku (sudoku *s) {
 }
 
 int cmpSquare (const void *a, const void *b) {
-    return ((pSquares *) a)->qtd - ((pSquares *) b)->qtd;
+    return ((pSquares *) b)->qtd - ((pSquares *) a)->qtd;
 }
 
 static int search (sudoku *s, int argMinI, int argMinJ, int argK) {
     int i, j, k;
+    if (jaDividiuProcessos) MPI_Test(&polling, &flag, MPI_STATUS_IGNORE);
+    if (flag != 0) return 0;
 
     int status = argK > 0 ? assign(s, argMinI, argMinJ, argK) : 1;
-    if (!status) return status;
+    if (!status) return 0;
 
     int solved = 1;
     for (i = 0; solved && i < s->dim; i++) 
@@ -309,8 +321,7 @@ static int search (sudoku *s, int argMinI, int argMinJ, int argK) {
             }
     if (solved) {
         s->sol_count++;
-        // send assincrono
-        return SUDOKU_SOLVE_STRATEGY == SUDOKU_SOLVE;
+        return 1;
     }
 
     //ok, there is still some work to be done
@@ -375,14 +386,9 @@ static int search (sudoku *s, int argMinI, int argMinJ, int argK) {
             for (i = 0; i < min / 2; i++) {
                 copia = copiarSudoku(s);
                 resultado = search(copia, minI, minJ, possibilidades[i].k);
-                if (resultado != 0) {
-                    display(copia);
-                    alguemTerminou = 1;
-                    MPI_Type_free(&mpi_psquare_type);
-                    return 1;
-                }
+                if (resultado) return apresentarResultados(copia, &mpi_psquare_type);
             }
-            
+            MPI_Wait(&polling, MPI_STATUS_IGNORE);
         } else { 
 
             int number_amount, resultado;
@@ -397,13 +403,9 @@ static int search (sudoku *s, int argMinI, int argMinJ, int argK) {
             for (i = 0; i < number_amount; i++) {
                 copia = copiarSudoku(s);
                 resultado = search(copia, minI, minJ, possibilidades[i].k);
-                if (resultado != 0) {
-                    display(copia);
-                    alguemTerminou = 1;
-                    MPI_Type_free(&mpi_psquare_type);
-                    return 1;
-                }
+                if (resultado) return apresentarResultados(copia, &mpi_psquare_type);
             }
+            MPI_Wait(&polling, MPI_STATUS_IGNORE);
         }
 
         return 0;
@@ -419,6 +421,8 @@ static int search (sudoku *s, int argMinI, int argMinJ, int argK) {
                     ret = 1;
                     goto FR_RT;
                 } else {
+                    MPI_Test(&polling, &flag, MPI_STATUS_IGNORE);
+                    if (flag != 0) goto FR_RT;
                     for (i = 0; i < s->dim; i++) 
                         for (j = 0; j < s->dim; j++)
                             s->values[i][j] = values_bkp[i][j];
@@ -441,23 +445,13 @@ int solve(sudoku *s) {
 
 int main (int argc, char **argv) {
 
-    // Initialize the MPI environment
     MPI_Init(NULL, NULL);
 
-    // Get the number of processes
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
 
-    // Get the rank of the process
     MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
 
-    // Get the name of the processor
-    char processor_name[MPI_MAX_PROCESSOR_NAME];
-    int name_len;
-    MPI_Get_processor_name(processor_name, &name_len);
-
-    // Print off a hello world message
-    printf("Hello world from processor %s, rank %d out of %d processors\n",
-           processor_name, world_rank, world_size);
+    MPI_Irecv(&alguemTerminou, 1, MPI_INT, world_rank == 1 ? 0 : 1, 123, MPI_COMM_WORLD, &polling);
 
     sudoku *s;
 
@@ -498,7 +492,6 @@ int main (int argc, char **argv) {
         printf("Could not load puzzle.\n");
     }
 
-    //Finalize the MPI environment.
     MPI_Finalize();
 
     return 0;
