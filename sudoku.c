@@ -301,7 +301,7 @@ sudoku* copiarSudoku (sudoku *s) {
 }
 
 int cmpSquare (const void *a, const void *b) {
-    return ((pSquares *) b)->qtd - ((pSquares *) a)->qtd;
+    return ((pSquares *) a)->qtd - ((pSquares *) b)->qtd;
 }
 
 static int search (sudoku *s, int argMinI, int argMinJ, int argK) {
@@ -421,8 +421,6 @@ static int search (sudoku *s, int argMinI, int argMinJ, int argK) {
                     ret = 1;
                     goto FR_RT;
                 } else {
-                    MPI_Test(&polling, &flag, MPI_STATUS_IGNORE);
-                    if (flag != 0) goto FR_RT;
                     for (i = 0; i < s->dim; i++) 
                         for (j = 0; j < s->dim; j++)
                             s->values[i][j] = values_bkp[i][j];
