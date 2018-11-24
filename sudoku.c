@@ -5,6 +5,7 @@
 #include <string.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <omp.h>
 #include <mpi.h>
 
 #define INT_TYPE unsigned long long 
@@ -85,6 +86,7 @@ static inline int digit_get (cell_v *v) {
 }
 
 static void destroy_sudoku(sudoku *s) {
+    #pragma omp parallel for
     for (int i = 0; i < s->dim; i++) {
         for (int j = 0; j < s->dim; j++) {
             for (int k = 0; k < 3; k++)
@@ -95,6 +97,7 @@ static void destroy_sudoku(sudoku *s) {
     }
     free(s->unit_list);
     
+    #pragma omp parallel for
     for (int i = 0; i < s->dim; i++) {
         for (int j = 0; j < s->dim; j++)
             free(s->peers[i][j]);
@@ -102,6 +105,7 @@ static void destroy_sudoku(sudoku *s) {
     }
     free(s->peers);
     
+    #pragma omp parallel for
     for (int i = 0; i < s->dim; i++) 
         free(s->values[i]);
     free(s->values);
@@ -186,6 +190,8 @@ static sudoku *create_sudoku(int bdim, int *grid) {
     //[r][c][0 - row, 1 - column, 2 - box]//[r][c][0 - row, 1 - column, 2 - box][ix]
     r->unit_list = malloc(sizeof(cell_coord***) * dim);
     assert(r->unit_list);
+
+    #pragma omp parallel for
     for (int i = 0; i < dim; i++) {
         r->unit_list[i] = malloc(sizeof(cell_coord**) * dim);
         assert (r->unit_list[i]);
@@ -201,6 +207,8 @@ static sudoku *create_sudoku(int bdim, int *grid) {
     
     r->peers = malloc(sizeof(cell_coord**) * dim);
     assert(r->peers);
+
+    #pragma omp parallel for
     for (int i = 0; i < dim; i++) {
         r->peers[i] = malloc(sizeof(cell_coord*) * dim);
         assert(r->peers[i]);
@@ -212,6 +220,8 @@ static sudoku *create_sudoku(int bdim, int *grid) {
     
     r->values = malloc (sizeof(cell_v*) * dim);
     assert(r->values);
+
+    #pragma omp parallel for
     for (int i = 0; i < dim; i++) {
         r->values[i] = calloc(dim, sizeof(cell_v));
         assert(r->values[i]);
