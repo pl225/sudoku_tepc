@@ -43,7 +43,7 @@ typedef struct sudoku {
     cell_v **values;
     
     unsigned long long sol_count;
-    bool status;
+    int status;
 } sudoku;
 
 typedef struct pSquares
@@ -52,7 +52,7 @@ typedef struct pSquares
     int k;
 } pSquares;
 
-bool jaDividiuProcessos = false;
+bool jaDividiuProcessos = false, terminouLocalmente = false;
 int world_size, world_rank, alguemTerminou = 0, flag = 0;
 MPI_Request polling;
 
@@ -292,10 +292,23 @@ static void display(sudoku *s) {
 int apresentarResultados (sudoku * copia, MPI_Datatype *mpi_psquare_type) {
     display(copia);
     MPI_Cancel(&polling);
+    terminouLocalmente = true;
     alguemTerminou = 1;
     MPI_Send(&alguemTerminou, 1, MPI_INT, world_rank == 0 ? 1 : 0, 123, MPI_COMM_WORLD);
     MPI_Type_free(mpi_psquare_type);
     return 1;
+}
+
+void encontrarSquareMenosPossibilidades (sudoku *s, int *min, int *minI, int *minJ) {
+    for (int i = 0; i < s->dim; i++) 
+        for (int j = 0; j < s->dim; j++) {
+            int used = cell_v_count(&s->values[i][j]);
+            if (used > 1 && used < min) {
+                *min = used;
+                *minI = i;
+                *minJ = j;
+            }
+        }
 }
 
 sudoku* copiarSudoku (sudoku *s) {
@@ -317,7 +330,7 @@ int cmpSquare (const void *a, const void *b) {
 static int search (sudoku *s, int argMinI, int argMinJ, int argK) {
     int i, j, k;
     if (jaDividiuProcessos) MPI_Test(&polling, &flag, MPI_STATUS_IGNORE);
-    if (flag != 0) return 0;
+    if (flag != 0 || terminouLocalmente) return 0;
 
     int status = argK > 0 ? assign(s, argMinI, argMinJ, argK) : 1;
     if (!status) return 0;
@@ -343,16 +356,8 @@ static int search (sudoku *s, int argMinI, int argMinJ, int argK) {
     cell_v **values_bkp = malloc (sizeof (cell_v *) * s->dim);
     for (i = 0; i < s->dim; i++)
         values_bkp[i] = malloc (sizeof (cell_v) * s->dim);
-    
-    for (i = 0; i < s->dim; i++) 
-        for (j = 0; j < s->dim; j++) {
-            int used = cell_v_count(&s->values[i][j]);
-            if (used > 1 && used < min) {
-                min = used;
-                minI = i;
-                minJ = j;
-            }
-        }
+
+    encontrarSquareMenosPossibilidades(s, &min, &minI, &minJ);
 
     if (!jaDividiuProcessos) {
         jaDividiuProcessos = true;
@@ -390,6 +395,25 @@ static int search (sudoku *s, int argMinI, int argMinJ, int argK) {
 
             if (min % 2 == 0) MPI_Send(possibilidades + (min / 2), min / 2, mpi_psquare_type, 0, 0, MPI_COMM_WORLD);
             else MPI_Send(possibilidades + (min / 2) + 1, min / 2, mpi_psquare_type, 0, 0, MPI_COMM_WORLD);
+
+            sudoku* vetoresSudoku[min];
+            #pragma omp parallel
+            {
+                #pragma omp for
+                for (int a = 0; a < min / 2; a++)
+                    vetoresSudoku[a] = copiarSudoku(s);
+
+                #pragma omp for
+                for (int a = 0; a < min / 2; a++)
+                    #pragma omp task
+                    vetoresSudoku[a].status = assign(vetoresSudoku[a], argMinI, argMinJ, possibilidades[a].k);
+
+                #pragma omp taskwait
+
+                #pragma omp single //encontrarSquareMenosPossibilidades
+
+                // iniciar tarefas
+            }
 
             sudoku *copia;
             int resultado;
