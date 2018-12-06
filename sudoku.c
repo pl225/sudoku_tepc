@@ -53,10 +53,11 @@ typedef struct pSquares
 } pSquares;
 
 bool jaDividiuProcessos = false, terminouLocalmente = false;
-int world_size, world_rank, alguemTerminou = 0, flag = 0;
+int world_size, world_rank, alguemTerminou = 0, flag[] = {0, 0, 0, 0};
 MPI_Request polling;
 
 static int assign (sudoku *s, int i, int j, int d);
+static int search (sudoku *s, int argMinI, int argMinJ, int argK);
 
 static inline int cell_v_get(cell_v *v, int p) {
     return !!((*v).v[(p - 1) / INT_TYPE_SIZE] & (((INT_TYPE)1) << ((p - 1) % INT_TYPE_SIZE))); //!! otherwise p > 32 breaks the return
@@ -289,13 +290,12 @@ static void display(sudoku *s) {
             printf("%d ",  digit_get(&s->values[i][j]));
 }
 
-int apresentarResultados (sudoku * copia, MPI_Datatype *mpi_psquare_type) {
+int apresentarResultados (sudoku * copia) {
     display(copia);
     MPI_Cancel(&polling);
     terminouLocalmente = true;
     alguemTerminou = 1;
     MPI_Send(&alguemTerminou, 1, MPI_INT, world_rank == 0 ? 1 : 0, 123, MPI_COMM_WORLD);
-    MPI_Type_free(mpi_psquare_type);
     return 1;
 }
 
@@ -303,7 +303,7 @@ void encontrarSquareMenosPossibilidades (sudoku *s, int *min, int *minI, int *mi
     for (int i = 0; i < s->dim; i++) 
         for (int j = 0; j < s->dim; j++) {
             int used = cell_v_count(&s->values[i][j]);
-            if (used > 1 && used < min) {
+            if (used > 1 && used < *min) {
                 *min = used;
                 *minI = i;
                 *minJ = j;
@@ -311,9 +311,23 @@ void encontrarSquareMenosPossibilidades (sudoku *s, int *min, int *minI, int *mi
         }
 }
 
+void encontrarSquareNumProcessadores (sudoku *s, int *min, int *minI, int *minJ) {
+    int wanted = omp_get_num_procs(); 
+    for (int i = 0; i < s->dim; i++) 
+        for (int j = 0; j < s->dim; j++) {
+            int used = cell_v_count(&s->values[i][j]);
+            if (wanted == used) {
+                *min = used;
+                *minI = i;
+                *minJ = j;
+                break;
+            }
+        }
+}
+
 sudoku* copiarSudoku (sudoku *s) {
     sudoku *copia = malloc(sizeof(sudoku));
-    copia->status = false;
+    copia->status = 1;
     memcpy(copia, s, sizeof(sudoku));
     copia->values = malloc (sizeof (cell_v *) * s->dim);
     for (int i = 0; i < s->dim; i++) {
@@ -323,14 +337,52 @@ sudoku* copiarSudoku (sudoku *s) {
     return copia;
 }
 
+int fazerTarefas (sudoku *s, int nsudokus, int minI, int minJ, pSquares possibilidades []) {
+    
+    sudoku* vetoresSudoku[nsudokus];
+
+    #pragma omp parallel
+    {
+        #pragma omp for
+        for (int a = 0; a < nsudokus; a++) {
+            vetoresSudoku[a] = copiarSudoku(s);
+            vetoresSudoku[a]->status = assign(vetoresSudoku[a], minI, minJ, possibilidades[a].k);
+        }
+
+        #pragma omp single nowait
+        for (int a = 0; a < nsudokus; a++) {
+            if (vetoresSudoku[a]->status) {
+                int min = INT_MAX, minI, minJ;
+                encontrarSquareMenosPossibilidades(vetoresSudoku[a], &min, &minI, &minJ);
+
+                for (int k = 1; k <= vetoresSudoku[a]->dim; k++) {
+                    if (cell_v_get(&vetoresSudoku[a]->values[minI][minJ], k)) {
+                        #pragma omp task
+                        {
+                            vetoresSudoku[a] = copiarSudoku(vetoresSudoku[a]);
+                            search(vetoresSudoku[a], minI, minJ, k);
+                        }
+                    }
+                }
+            }
+        }
+
+        #pragma omp taskwait
+    }
+
+    for (int a = 0; a < nsudokus; a++)
+        if (vetoresSudoku[a]->status) return 1;
+    return 0;
+}
+
 int cmpSquare (const void *a, const void *b) {
-    return ((pSquares *) a)->qtd - ((pSquares *) b)->qtd;
+    return ((pSquares *) b)->qtd - ((pSquares *) a)->qtd;
 }
 
 static int search (sudoku *s, int argMinI, int argMinJ, int argK) {
     int i, j, k;
-    if (jaDividiuProcessos) MPI_Test(&polling, &flag, MPI_STATUS_IGNORE);
-    if (flag != 0 || terminouLocalmente) return 0;
+    if (jaDividiuProcessos) MPI_Test(&polling, &flag[omp_get_thread_num()], MPI_STATUS_IGNORE);
+    if (flag[omp_get_thread_num()] != 0 || terminouLocalmente) return 0;
 
     int status = argK > 0 ? assign(s, argMinI, argMinJ, argK) : 1;
     if (!status) return 0;
@@ -344,6 +396,8 @@ static int search (sudoku *s, int argMinI, int argMinJ, int argK) {
             }
     if (solved) {
         s->sol_count++;
+        s->status = 1;
+        apresentarResultados(s);
         return 1;
     }
 
@@ -396,36 +450,13 @@ static int search (sudoku *s, int argMinI, int argMinJ, int argK) {
             if (min % 2 == 0) MPI_Send(possibilidades + (min / 2), min / 2, mpi_psquare_type, 0, 0, MPI_COMM_WORLD);
             else MPI_Send(possibilidades + (min / 2) + 1, min / 2, mpi_psquare_type, 0, 0, MPI_COMM_WORLD);
 
-            sudoku* vetoresSudoku[min];
-            #pragma omp parallel
-            {
-                #pragma omp for
-                for (int a = 0; a < min / 2; a++)
-                    vetoresSudoku[a] = copiarSudoku(s);
-
-                #pragma omp for
-                for (int a = 0; a < min / 2; a++)
-                    #pragma omp task
-                    vetoresSudoku[a].status = assign(vetoresSudoku[a], argMinI, argMinJ, possibilidades[a].k);
-
-                #pragma omp taskwait
-
-                #pragma omp single //encontrarSquareMenosPossibilidades
-
-                // iniciar tarefas
-            }
-
-            sudoku *copia;
-            int resultado;
-            for (i = 0; i < min / 2; i++) {
-                copia = copiarSudoku(s);
-                resultado = search(copia, minI, minJ, possibilidades[i].k);
-                if (resultado) return apresentarResultados(copia, &mpi_psquare_type);
-            }
+            MPI_Type_free(&mpi_psquare_type);
+            if (fazerTarefas (s, min / 2, minI, minJ, possibilidades)) return 1;
             MPI_Wait(&polling, MPI_STATUS_IGNORE);
+            return 0;
         } else { 
 
-            int number_amount, resultado;
+            int number_amount;
             MPI_Status status;
             MPI_Probe(1, 0, MPI_COMM_WORLD, &status);
             MPI_Get_count(&status, mpi_psquare_type, &number_amount);
@@ -433,13 +464,10 @@ static int search (sudoku *s, int argMinI, int argMinJ, int argK) {
             pSquares possibilidades[number_amount];
             MPI_Recv(possibilidades, number_amount, mpi_psquare_type, 1, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
-            sudoku *copia;
-            for (i = 0; i < number_amount; i++) {
-                copia = copiarSudoku(s);
-                resultado = search(copia, minI, minJ, possibilidades[i].k);
-                if (resultado) return apresentarResultados(copia, &mpi_psquare_type);
-            }
+            MPI_Type_free(&mpi_psquare_type);
+            if (fazerTarefas(s, number_amount, minI, minJ, possibilidades)) return 1;
             MPI_Wait(&polling, MPI_STATUS_IGNORE);
+            return 0;
         }
 
         return 0;
@@ -518,7 +546,7 @@ int main (int argc, char **argv) {
     } 
     if (s) {
         int result = solve(s);
-        if (!result && alguemTerminou == 0) printf("Could not solve puzzle.\n");
+        if (!result && alguemTerminou == 0 && terminouLocalmente == false) printf("Could not solve puzzle.\n");
         destroy_sudoku(s);
     } else {
         printf("Could not load puzzle.\n");
