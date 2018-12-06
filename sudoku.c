@@ -370,9 +370,7 @@ int fazerTarefas (sudoku *s, int nsudokus, int minI, int minJ, pSquares possibil
         #pragma omp taskwait
     }
 
-    for (int a = 0; a < nsudokus; a++)
-        if (vetoresSudoku[a]->status) return 1;
-    return 0;
+    return terminouLocalmente ? 1 : 0;
 }
 
 int cmpSquare (const void *a, const void *b) {
