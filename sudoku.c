@@ -346,30 +346,25 @@ sudoku* copiarSudoku (sudoku *s) {
     return copia;
 }
 
-int fazerTarefas (sudoku *s, int nsudokus, int minI, int minJ, pSquares possibilidades []) {
+int fazerTarefas (sudoku *s, int inicio, int fim, int minI, int minJ, int possibilidades []) {
     
-    sudoku* vetoresSudoku[nsudokus];
+    sudoku* vetoresSudoku[fim - inicio];
 
     #pragma omp parallel
     {
-        #pragma omp for
-        for (int a = 0; a < nsudokus; a++) {
-            vetoresSudoku[a] = copiarSudoku(s);
-            vetoresSudoku[a]->status = assign(vetoresSudoku[a], minI, minJ, possibilidades[a].k);
-        }
 
         #pragma omp single nowait
-        for (int a = 0; a < nsudokus; a++) {
+        for (int i = inicio, a = 0; i < fim; i++, a++) {
+            vetoresSudoku[a] = copiarSudoku(s);
+            vetoresSudoku[a]->status = assign(vetoresSudoku[a], minI, minJ, possibilidades[i]);
             if (vetoresSudoku[a]->status) {
-                int min = INT_MAX, minI, minJ;
-                encontrarSquareNumProcessadores(vetoresSudoku[a], &min, &minI, &minJ);
-
-                for (int k = 1; k <= vetoresSudoku[a]->dim; k++) {
-                    if (cell_v_get(&vetoresSudoku[a]->values[minI][minJ], k)) {
-                        #pragma omp task
-                        {
-                            vetoresSudoku[a] = copiarSudoku(vetoresSudoku[a]);
-                            search(vetoresSudoku[a], minI, minJ, k);
+                int min = INT_MAX, minI = 0, minJ = 0;
+                #pragma omp task private(min, minI, minJ)
+                {
+                    encontrarSquareMenosPossibilidades(vetoresSudoku[a], &min, &minI, &minJ);
+                    for (int k = 1; k <= vetoresSudoku[a]->dim; k++) {
+                        if (cell_v_get(&vetoresSudoku[a]->values[minI][minJ], k)) {
+                            search(copiarSudoku(vetoresSudoku[a]), minI, minJ, k);
                         }
                     }
                 }
@@ -422,64 +417,24 @@ static int search (sudoku *s, int argMinI, int argMinJ, int argK) {
     if (!jaDividiuProcessos) {
         jaDividiuProcessos = true;
 
-        const int nitems = 2;
-        int blocklenghts [] = {1, 1};
-        MPI_Datatype types [] = {MPI_INT, MPI_INT};
-        MPI_Datatype mpi_psquare_type;
-        MPI_Aint offsets[2];
+        int qtd_possi = cell_v_count(&s->values[minI][minJ]), i, j = 0;
+        int possibilidades[qtd_possi];
 
-        offsets[0] = offsetof(pSquares, qtd);
-        offsets[1] = offsetof(pSquares, k);
-
-        MPI_Type_create_struct(nitems, blocklenghts, offsets, types, &mpi_psquare_type);
-        MPI_Type_commit(&mpi_psquare_type);
-        
-        if (world_rank == 1) {
-            pSquares possibilidades[min];
-            
-            int a = 0;
-            for (k = 1; k <= s->dim; k++) {
-                if (cell_v_get(&s->values[minI][minJ], k))  {
-                    int q = 0; // contador do aparecimento de k nos quadrados do tabuleiro
-                    for (i = 0; i < s->dim; i++) {
-                        for (j = 0; j < s->dim; j++) {
-                            if(cell_v_get(&s->values[i][j], k)) q++;
-                        }
-                    }
-                    possibilidades[a].qtd = q, possibilidades[a].k = k;
-                    a++;
-                }
+        for(i = 1 ; i <= s->dim ; i++)
+        {
+            if(cell_v_get(&s->values[minI][minJ], i))
+            {
+                possibilidades[j++] = i;
             }
-
-            qsort(possibilidades, min, sizeof(pSquares), cmpSquare);
-
-            if (min % 2 == 0) MPI_Send(possibilidades + (min / 2), min / 2, mpi_psquare_type, 0, 0, MPI_COMM_WORLD);
-            else MPI_Send(possibilidades + (min / 2) + 1, min / 2, mpi_psquare_type, 0, 0, MPI_COMM_WORLD);
-
-            MPI_Type_free(&mpi_psquare_type);
-            pthread_create(&id, NULL, initPolling, NULL);
-            if (fazerTarefas (s, min / 2, minI, minJ, possibilidades)) return 1;
-            pthread_cancel(id);
-            MPI_Wait(&polling, MPI_STATUS_IGNORE);
-            return 0;
-        } else { 
-
-            int number_amount;
-            MPI_Status status;
-            MPI_Probe(1, 0, MPI_COMM_WORLD, &status);
-            MPI_Get_count(&status, mpi_psquare_type, &number_amount);
-
-            pSquares possibilidades[number_amount];
-            MPI_Recv(possibilidades, number_amount, mpi_psquare_type, 1, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-
-            MPI_Type_free(&mpi_psquare_type);
-            pthread_create(&id, NULL, initPolling, NULL);
-            if (fazerTarefas(s, number_amount, minI, minJ, possibilidades)) return 1;
-            pthread_cancel(id);
-            MPI_Wait(&polling, MPI_STATUS_IGNORE);
-            return 0;
         }
 
+        int inicio = (int)(world_rank*((double)qtd_possi)/world_size),
+            fim = (int)((world_rank + 1)*((double)qtd_possi)/world_size);
+
+        pthread_create(&id, NULL, initPolling, NULL);
+        if (fazerTarefas (s, inicio, fim, minI, minJ, possibilidades)) return 1;
+        pthread_cancel(id);
+        MPI_Wait(&polling, MPI_STATUS_IGNORE);
         return 0;
 
     } else {            
