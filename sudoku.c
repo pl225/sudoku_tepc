@@ -6,6 +6,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <omp.h>
+#include <pthread.h>
 #include <mpi.h>
 
 #define INT_TYPE unsigned long long 
@@ -53,8 +54,16 @@ typedef struct pSquares
 } pSquares;
 
 bool jaDividiuProcessos = false, terminouLocalmente = false;
-int world_size, world_rank, alguemTerminou = 0, flag[] = {0, 0, 0, 0};
+int world_size, world_rank, alguemTerminou = 0, flag[] = {0, 0, 0, 0, 0, 0};
+pthread_t id;
 MPI_Request polling;
+
+void* initPolling (void* args) {
+
+    MPI_Wait(&polling, MPI_STATUS_IGNORE);
+    alguemTerminou = 1;
+    return NULL;
+}
 
 static int assign (sudoku *s, int i, int j, int d);
 static int search (sudoku *s, int argMinI, int argMinJ, int argK);
@@ -353,7 +362,7 @@ int fazerTarefas (sudoku *s, int nsudokus, int minI, int minJ, pSquares possibil
         for (int a = 0; a < nsudokus; a++) {
             if (vetoresSudoku[a]->status) {
                 int min = INT_MAX, minI, minJ;
-                encontrarSquareMenosPossibilidades(vetoresSudoku[a], &min, &minI, &minJ);
+                encontrarSquareNumProcessadores(vetoresSudoku[a], &min, &minI, &minJ);
 
                 for (int k = 1; k <= vetoresSudoku[a]->dim; k++) {
                     if (cell_v_get(&vetoresSudoku[a]->values[minI][minJ], k)) {
@@ -379,8 +388,7 @@ int cmpSquare (const void *a, const void *b) {
 
 static int search (sudoku *s, int argMinI, int argMinJ, int argK) {
     int i, j, k;
-    if (jaDividiuProcessos) MPI_Test(&polling, &flag[omp_get_thread_num()], MPI_STATUS_IGNORE);
-    if (flag[omp_get_thread_num()] != 0 || terminouLocalmente) return 0;
+    if (alguemTerminou || terminouLocalmente) return 0;
 
     int status = argK > 0 ? assign(s, argMinI, argMinJ, argK) : 1;
     if (!status) return 0;
@@ -449,7 +457,9 @@ static int search (sudoku *s, int argMinI, int argMinJ, int argK) {
             else MPI_Send(possibilidades + (min / 2) + 1, min / 2, mpi_psquare_type, 0, 0, MPI_COMM_WORLD);
 
             MPI_Type_free(&mpi_psquare_type);
+            pthread_create(&id, NULL, initPolling, NULL);
             if (fazerTarefas (s, min / 2, minI, minJ, possibilidades)) return 1;
+            pthread_cancel(id);
             MPI_Wait(&polling, MPI_STATUS_IGNORE);
             return 0;
         } else { 
@@ -463,7 +473,9 @@ static int search (sudoku *s, int argMinI, int argMinJ, int argK) {
             MPI_Recv(possibilidades, number_amount, mpi_psquare_type, 1, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
             MPI_Type_free(&mpi_psquare_type);
+            pthread_create(&id, NULL, initPolling, NULL);
             if (fazerTarefas(s, number_amount, minI, minJ, possibilidades)) return 1;
+            pthread_cancel(id);
             MPI_Wait(&polling, MPI_STATUS_IGNORE);
             return 0;
         }
