@@ -8,6 +8,7 @@
 #include <omp.h>
 #include <pthread.h>
 #include <mpi.h>
+#include <papi.h>
 
 #define MAX_BDIM 8
 
@@ -383,9 +384,9 @@ int fazerTarefas (Sudoku *s, int inicio, int fim, int minI, int possibilidades [
             vetoresSudoku[a] = copy_sudoku(s);
             vetoresSudoku[a]->status = assign(vetoresSudoku[a], minI, possibilidades[i]);
             if (vetoresSudoku[a]->status) {
-                int min = INT_MAX, minI = 0;
-                #pragma omp task private(min, minI)
+                #pragma omp task
                 {
+                    int min = INT_MAX, minI = 0;
                     encontrarSquareMenosPossibilidades(vetoresSudoku[a], &min, &minI);
                     for (int k = 1; k <= vetoresSudoku[a]->dim; k++) {
                         if (cell_v_get(&vetoresSudoku[a]->values[minI], k)) {
@@ -490,6 +491,13 @@ int main (int argc, char **argv) {
     MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
 
     MPI_Irecv(&alguemTerminou, 1, MPI_INT, world_rank == 1 ? 0 : 1, 123, MPI_COMM_WORLD, &polling);
+
+int        retval = PAPI_library_init(PAPI_VER_CURRENT);
+if (retval != PAPI_VER_CURRENT) {
+  printf("PAPI library init error!\n");
+  exit(1);
+}
+
 
     Sudoku *s;
 

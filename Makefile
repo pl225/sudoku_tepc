@@ -9,12 +9,12 @@ INCLUDES  =	-I. -I/usr/local/share/papi/testlib/
 
 LIBDIR   = -L/usr/local/lib/
          
-LIBS     =  -lm  -lpapi -fopenmp -lpthread
+LIBS     =  -lm  -lpapi
 
 LINK     =  $(LIBDIR) $(LIBS) 
 
 DEFS      += 
-CPPFLAGS  +=  -O3 -std=c11 -march=native
+CPPFLAGS  +=  -O3 -std=c11 -march=native -Wall -fopenmp -lpthread
 
 
 all:	 main
