@@ -10,6 +10,7 @@
 #include <mpi.h>
 #include <papi.h>
 
+#define NUM_EVENTS 6
 #define MAX_BDIM 8
 
 enum SOLVE_STRATEGY {SUDOKU_SOLVE, SUDOKU_COUNT_SOLS};
@@ -328,14 +329,16 @@ int apresentarResultados (Sudoku * copia) {
     return 1;
 }
 
-void encontrarSquareMenosPossibilidades (Sudoku *s, int *min, int *minI) {
+int encontrarSquareMenosPossibilidades (Sudoku *s) {
+    int minI = 0, min = INT_MAX;
     for (int i = 0; i < s->dim * s->dim; i++)  {
         int used = cell_v_count(&s->values[i]);
-        if (used > 1 && used < *min) {
-            *min = used;
-            *minI = i;
+        if (used > 1 && used < min) {
+            min = used;
+            minI = i;
         }
     }
+    return minI;
 }
 
 void encontrarSquareNumProcessadores (Sudoku *s, int *min, int *minI) {
@@ -384,10 +387,9 @@ int fazerTarefas (Sudoku *s, int inicio, int fim, int minI, int possibilidades [
             vetoresSudoku[a] = copy_sudoku(s);
             vetoresSudoku[a]->status = assign(vetoresSudoku[a], minI, possibilidades[i]);
             if (vetoresSudoku[a]->status) {
-                #pragma omp task
+                #pragma omp task /*firstprivate(min, minI)*/
                 {
-                    int min = INT_MAX, minI = 0;
-                    encontrarSquareMenosPossibilidades(vetoresSudoku[a], &min, &minI);
+                    int minI = encontrarSquareMenosPossibilidades(vetoresSudoku[a]);
                     for (int k = 1; k <= vetoresSudoku[a]->dim; k++) {
                         if (cell_v_get(&vetoresSudoku[a]->values[minI], k)) {
                             search(copy_sudoku(vetoresSudoku[a]), minI, k);
@@ -425,13 +427,11 @@ static int search (Sudoku *s, int argMinI, int argK) {
     }
 
     //ok, there is still some work to be done
-    int min = INT_MAX;
-    int minI = -1;
     int ret = 0;
     
     unsigned long long *values_bkp = malloc (sizeof (unsigned long long) * s->dim * s->dim);
 
-    encontrarSquareMenosPossibilidades(s, &min, &minI);
+    int minI = encontrarSquareMenosPossibilidades(s);
 
     if (!jaDividiuProcessos) {
         jaDividiuProcessos = true;
@@ -531,7 +531,23 @@ if (retval != PAPI_VER_CURRENT) {
         s = create_sudoku(size, buf);
     } 
     if (s) {
+
+        long long values[NUM_EVENTS];
+        int Events[NUM_EVENTS] = {PAPI_LD_INS, PAPI_SR_INS, PAPI_L1_DCM, PAPI_L2_DCM, PAPI_L3_DCM, PAPI_TLB_DM}, EventSet = PAPI_NULL;
+        int Papi;
+
+        Papi = PAPI_library_init(PAPI_VER_CURRENT); 
+        Papi = PAPI_create_eventset(&EventSet); 
+        Papi = PAPI_add_events(EventSet, Events, NUM_EVENTS); 
+        Papi = PAPI_start(EventSet); 
+
         int result = solve(s);
+
+        Papi = PAPI_stop(EventSet, values);
+        for(int i=0; i<NUM_EVENTS; i++)
+            printf("%d evento[%d]: %lli\n", world_rank, i, values[i]);
+        PAPI_shutdown();
+
         if (!result && alguemTerminou == 0 && terminouLocalmente == false) printf("Could not solve puzzle.\n");
         destroy_sudoku(s);
     } else {
